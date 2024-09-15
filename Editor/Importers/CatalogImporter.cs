@@ -8,7 +8,12 @@ using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEditor.Build.Pipeline.Utilities;
+#if UNITY_2020_2_OR_NEWER
+using UnityEditor.AssetImporters;
+#else
 using UnityEditor.Experimental.AssetImporters;
+#endif
+
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -27,11 +32,10 @@ namespace BundleKit.Bundles
 
             var (bun, bundleAssetsFile, assetBundleExtAsset) = am.LoadBundle(ctx.assetPath);
 
-            var bundleBaseField = assetBundleExtAsset.instance.GetBaseField();
-            var dependencyArray = bundleBaseField.GetField("m_Dependencies/Array");
-            var dependencies = dependencyArray.GetChildrenList().Select(dep => dep.GetValue().AsString()).ToArray();
-            var container = bundleBaseField.GetField("m_Container/Array");
-            var bundleName = bundleBaseField.GetValue("m_AssetBundleName").AsString();
+            var bundleBaseField = assetBundleExtAsset.baseField;
+            var dependencyArray = bundleBaseField["m_Dependencies.Array"];
+            var container = bundleBaseField["m_Container.Array"];
+            var bundleName = bundleBaseField["m_AssetBundleName"].AsString;
 
             am.UnloadAll();
 
@@ -60,7 +64,7 @@ namespace BundleKit.Bundles
             for (int i = 0; i < allAssets.Length; i++)
             {
                 var asset = allAssets[i];
-                if (asset.name == "FileMap") continue;
+                if (asset.name == "BundleKitFileMap") continue;
                 if (asset is Shader shader)
                 {
                     ShaderUtil.RegisterShader(shader);

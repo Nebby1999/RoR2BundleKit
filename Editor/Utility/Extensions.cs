@@ -1,5 +1,6 @@
 ﻿using AssetsTools.NET;
 using AssetsTools.NET.Extra;
+using AssetsTools.NET.Texture;
 using BundleKit.Assets;
 using System;
 using System.Collections.Generic;
@@ -33,41 +34,20 @@ namespace BundleKit.Utility
         }
         public static bool IsNullOrEmpty<T>(this ICollection<T> collection) => collection == null || collection.Count == 0;
 
-
-        public static IEnumerable<AssetTree> CollectAssetTrees(this AssetsFileInstance assetsFileInst, AssetsManager am, Regex[] nameRegex, AssetClassID assetClass, UpdateLog Update)
-        {
-            // Iterate over all requested Class types and collect the data required to copy over the required asset information
-            // This step will recurse over dependencies so all required assets will become available from the resulting bundle
-            Update("Collecting Asset Trees", log: false);
-            var fileInfos = assetsFileInst.table.GetAssetsOfType((int)assetClass);
-            for (var x = 0; x < fileInfos.Count; x++)
-            {
-                var assetFileInfo = fileInfos[x];
-
-                var name = AssetHelper.GetAssetNameFast(assetsFileInst.file, am.classFile, assetFileInfo);
-                // If a name Regex filter is applied, and it does not match, continue
-                int i = 0;
-                for (; i < nameRegex.Length; i++)
-                    if (nameRegex[i] != null && nameRegex[i].IsMatch(name))
-                        break;
-                if (nameRegex.Length != 0 && i == nameRegex.Length) continue;
-
-                var tree = assetsFileInst.GetHierarchy(am, 0, assetFileInfo.index);
-                Update("Collecting Asset Trees", $"({assetClass}) {tree.name}", log: true);
-
-                yield return tree;
-            }
-        }
-        public static AssetTree GetHierarchy(this AssetsFileInstance inst, AssetsManager am, int fileId, long pathId)
+        public static AssetTree GetDependencies(
+            this AssetsFileInstance inst, AssetsManager am, ResourceManagerDb resourceManagerDb,
+            int fileId, long pathId, bool recurseFiles)
         {
             var fieldStack = new Stack<(AssetsFileInstance file, AssetTypeValueField field, AssetTree node)>();
             var baseAsset = am.GetExtAsset(inst, fileId, pathId);
-            var baseField = baseAsset.instance.GetBaseField();
+            var baseField = baseAsset.baseField;
 
+            resourceManagerDb.TryGetName(inst.name, pathId, out var rmName);
             var root = new AssetTree
             {
                 name = baseAsset.GetName(am),
-                assetExternal = baseAsset,
+                resourceManagerName = rmName,
+                sourceData = baseAsset,
                 FileId = fileId,
                 PathId = pathId,
                 Children = new List<AssetTree>()
@@ -79,46 +59,46 @@ namespace BundleKit.Utility
             while (fieldStack.Any())
             {
                 var current = fieldStack.Pop();
-                foreach (var child in current.field.children)
+                foreach (var child in current.field.Children)
                 {
-                    //not a value (ie not an int)
-                    if (!child.templateField.hasValue)
+                    //is a pptr
+                    if (!child.TemplateField.IsArray && child.TryParsePPtr(am, current.file, out var pPtrDest))
                     {
-                        //not array of values either
-                        if (child.templateField.isArray && child.templateField.children[1].valueType != EnumValueTypes.ValueType_None)
-                            continue;
-
-                        string typeName = child.templateField.type;
-                        //is a pptr
-                        if (typeName.StartsWith("PPtr<") && typeName.EndsWith(">"))
+                        if (!root.Children.Contains(pPtrDest) && root != pPtrDest)
                         {
-                            var pathIdRef = child.Get("m_PathID").GetValue().AsInt64();
-                            if (pathIdRef == 0)
-                                continue;
+                            root.Children.Add(pPtrDest);
 
-                            var fileIdRef = child.Get("m_FileID").GetValue().AsInt();
-                            var ext = am.GetExtAsset(current.file, fileIdRef, pathIdRef);
+                            // recurse through dependencies
+                            if (((AssetClassID)pPtrDest.sourceData.info.TypeId).CanHaveDependencies() && recurseFiles)
+                                fieldStack.Push((pPtrDest.sourceData.file, pPtrDest.sourceData.baseField, pPtrDest));
+                        }
 
-                            //we don't want to process monobehaviours as thats a project in itself
-                            if (ext.info.curFileType == (int)AssetClassID.MonoBehaviour)
-                                continue;
-
-                            var node = new AssetTree
+                        // Dependencies can be circular, so skip already visited dependencies.
+                    }
+                    else if (child.TemplateField.IsArray)
+                    {
+                        // is PPtr<T> array, eg m_Dependencies
+                        if (child.TemplateField.Children[1].Type.StartsWith("PPtr<"))
+                        {
+                            foreach (var pPtr in child.Children)
                             {
-                                name = ext.GetName(am),
-                                assetExternal = ext,
-                                FileId = fileIdRef,
-                                PathId = pathIdRef,
-                                Children = new List<AssetTree>()
-                            };
-                            current.node.Children.Add(node);
-
-                            //recurse through dependencies
-                            fieldStack.Push((ext.file, ext.instance.GetBaseField(), node));
+                                if (pPtr.TryParsePPtr(am, current.file, out var pPtrArrayNode)
+                                    && !root.Children.Contains(pPtrArrayNode) && root != pPtrArrayNode)
+                                {
+                                    root.Children.Add(pPtrArrayNode);
+                                    if (((AssetClassID)pPtrArrayNode.sourceData.info.TypeId).CanHaveDependencies() && recurseFiles)
+                                        fieldStack.Push((pPtrArrayNode.sourceData.file, pPtrArrayNode.sourceData.baseField, pPtrArrayNode));
+                                }
+                            }
                         }
                         else
+                        {
+                            // The array might be a struct type that contains a PPtr.
                             fieldStack.Push((current.file, child, current.node));
+                        }
                     }
+                    else
+                        fieldStack.Push((current.file, child, current.node));
                 }
             }
 
@@ -157,18 +137,18 @@ namespace BundleKit.Utility
 
         public static string GetName(this AssetExternal asset, AssetsManager am)
         {
-            switch ((AssetClassID)asset.info.curFileType)
+            switch ((AssetClassID)asset.info.TypeId)
             {
                 case AssetClassID.MonoBehaviour:
-                    var nameField = asset.instance.GetBaseField().Get("m_Name");
-                    return nameField.GetValue().AsString();
+                    var nameField = asset.baseField["m_Name"];
+                    return nameField.AsString;
 
                 case AssetClassID.Shader:
-                    var parsedFormField = asset.instance.GetBaseField().Get("m_ParsedForm");
-                    var shaderNameField = parsedFormField.Get("m_Name");
-                    return shaderNameField.GetValue().AsString();
+                    var parsedFormField = asset.baseField["m_ParsedForm"];
+                    var shaderNameField = parsedFormField["m_Name"];
+                    return shaderNameField.AsString;
                 default:
-                    return AssetHelper.GetAssetNameFast(asset.file.file, am.classFile, asset.info);
+                    return AssetHelper.GetAssetNameFast(asset.file.file, am.ClassDatabase, asset.info);
             }
         }
 
@@ -185,6 +165,54 @@ namespace BundleKit.Utility
                 Types = types;
             }
         }
-    }
 
+        /// <summary>
+        /// Returns false for some types known to be unable to have dependencies.  True otherwise.
+        /// This is mainly to avoid loading and parsing large serialized objects.
+        /// </summary>
+        public static bool CanHaveDependencies(this AssetClassID classId) => classId switch
+        {
+            AssetClassID.Mesh or AssetClassID.Texture2D or AssetClassID.ComputeShader => false,
+            _ => true,
+        };
+
+        /// <summary>
+        /// Check if any filter's assetClass assetFileInfo's TypeId.
+        ///
+        /// This is a pre-check to avoid a more expensive name fetch.
+        /// </summary>
+        public static bool MatchesAnyClass(this Filter[] filters, AssetFileInfo assetFileInfo)
+        {
+            foreach (var filter in filters)
+            {
+                if ((AssetClassID)assetFileInfo.TypeId == filter.assetClass)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Test if the combination of AssetClassID and asset name matches any filter.
+        /// </summary>
+        public static bool AnyMatch(this Filter[] filters, AssetFileInfo assetFileInfo, string name)
+        {
+            if (name is null)
+            {
+                return false;
+            }
+
+            foreach (var filter in filters)
+            {
+                if (filter.Match(assetFileInfo, name))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
 }

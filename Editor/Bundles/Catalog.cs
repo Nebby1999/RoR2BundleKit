@@ -29,8 +29,8 @@ namespace BundleKit.Bundles
 
             var (bun, bundleAssetsFile, assetBundleExtAsset) = am.LoadBundle(path);
 
-            var bundleBaseField = assetBundleExtAsset.instance.GetBaseField();
-            var bundleName = bundleBaseField.GetValue("m_AssetBundleName").AsString();
+            var bundleBaseField = assetBundleExtAsset.baseField;
+            var bundleName = bundleBaseField["m_AssetBundleName"].AsString;
 
             am.UnloadAll();
 
@@ -53,7 +53,7 @@ namespace BundleKit.Bundles
                         break;
                 }
             }
-            var fileMapJson = bundle.LoadAsset<TextAsset>("FileMap");
+            var fileMapJson = bundle.LoadAsset<TextAsset>("BundleKitFileMap");
             var fileMap = JsonUtility.FromJson<FileMap>(fileMapJson.text);
             var lookup = fileMap.Maps.ToDictionary(element => element.LocalId, element => element.OriginId);
 

@@ -7,13 +7,18 @@ using UnityEngine;
 
 namespace BundleKit.Assets
 {
-    [DebuggerDisplay("{assetsFileInstance.name}/{name} fid:{FileId} pid:{PathId} children: {Children.Count}")]
+    [DebuggerDisplay("{assetExternal.file.name}/{name} fid:{FileId} pid:{PathId} children: {Children.Count}")]
     public struct AssetTree : IEquatable<AssetTree>
     {
         public string name;
-        public AssetExternal assetExternal;
+        public string resourceManagerName;
+        public AssetExternal sourceData;
         public int FileId;
         public long PathId;
+        /// <summary>
+        /// List of dependencies in the dependency graph for the object has been resolved.
+        /// Null if dependencies are unknown.
+        /// </summary>
         public List<AssetTree> Children;
 
         public IEnumerable<(int fileId, long pathId)> FlattenIds(bool enterDependencies)
@@ -24,13 +29,17 @@ namespace BundleKit.Assets
                     foreach (var result in child.FlattenIds(enterDependencies))
                         yield return result;
         }
-        public IEnumerable<AssetTree> Flatten(bool enterDependencies)
+        public IEnumerable<AssetTree> WithDeps(bool enterDependencies)
         {
             yield return this;
-            foreach (var child in Children)
-                if (enterDependencies || child.FileId == 0)
-                    foreach (var result in child.Flatten(enterDependencies))
-                        yield return result;
+            if (enterDependencies)
+                foreach (var child in Children)
+                    yield return child;
+        }
+
+        public string GetBkCatalogName()
+        {
+            return string.IsNullOrEmpty(resourceManagerName) ? name.ToLower() : resourceManagerName;
         }
 
         public override bool Equals(object obj)
@@ -40,14 +49,14 @@ namespace BundleKit.Assets
 
         public bool Equals(AssetTree other)
         {
-            return EqualityComparer<AssetsFileInstance>.Default.Equals(assetExternal.file, other.assetExternal.file) &&
+            return EqualityComparer<AssetsFileInstance>.Default.Equals(sourceData.file, other.sourceData.file) &&
                    PathId == other.PathId;
         }
 
         public override int GetHashCode()
         {
             int hashCode = -1120199924;
-            hashCode = hashCode * -1521134295 + EqualityComparer<AssetsFileInstance>.Default.GetHashCode(assetExternal.file);
+            hashCode = hashCode * -1521134295 + EqualityComparer<AssetsFileInstance>.Default.GetHashCode(sourceData.file);
             hashCode = hashCode * -1521134295 + PathId.GetHashCode();
             return hashCode;
         }
