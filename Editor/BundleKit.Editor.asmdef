@@ -1,0 +1,24 @@
+{
+    "name": "BundleKit.Editor",
+    "rootNamespace": "",
+    "references": [
+        "ThunderKit.Common",
+        "ThunderKit.Core",
+        "Unity.ScriptableBuildPipeline",
+        "Unity.ScriptableBuildPipeline.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "AssetsTools.NET.dll",
+        "AssetsTools.NET.Texture.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
